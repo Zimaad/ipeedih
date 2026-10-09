@@ -1,123 +1,127 @@
-# ContainMAS: Review deck content (maps 1:1 to the required outline)
+# Attacking the Cure — review deck content (maps 1:1 to the required outline)
 
-Each section = 1-2 slides. **Bold** = put on slide. *Italic* = say out loud. Figures are in `results/`.
+**The project is the attack idea.** Not "we built a defense," but: *the automated **response** to an attack
+(quarantine, taint-purge, privilege recovery) is itself an exploitable attack surface in multi-agent LLM
+systems.* The defense we built (ContainMAS) is only the **testbed** we attack.
+
+**Bold** = goes on the slide. *Italic* = say out loud. Figures are in `results/`.
+
+**One-line thesis:**
+> *"Automated agent defenses assume that once an attack is detected, responding to it is safe. We show the
+> response is a new attack surface — an attacker can turn quarantine, purge and recovery into denial-of-service
+> and data-destruction primitives — and we bound the damage."*
 
 ---
 
 ## 1. Introduction
 
-- **LLM agents now act: they read the web, query databases, send email, and work in teams.**
-- **One poisoned web page can turn the whole team against its owner (prompt injection spreading between agents).**
-- **Our project, ContainMAS: a checkpoint between every agent and everything it touches. It enforces rules, learns what rules miss, shrinks privileges step by step, and heals the damage.**
+- **AI agents now act in teams — they read the web, query databases, send email.** A poisoned page can spread agent to agent (prompt injection).
+- **So defenses are getting active:** detect the attack, then **respond automatically** — quarantine the agent, purge contaminated data, restore trust gradually.
+- **Our observation:** every one of those responses can be *triggered on purpose*. If tripping the alarm is cheap, the attacker doesn't need to beat the defense — they make the defense hurt the system.
+- **This is "Attacking the Cure": response-path attacks on automated containment and recovery.**
 
-*Tell the Section 1 story from the proposal in 30 seconds, then say: "we built it, and here is the same story running." Run `python demo.py` live, or show a screenshot: it leaks 2,050 records without the defense and 0 with it.*
+*One sentence of context: to study this we needed a self-healing multi-agent defense to attack. None was standard, so we built one (ContainMAS) as our testbed.*
 
 ## 2. Literature Review
 
-| Family | Examples | Gap we target |
+| What prior work does | Examples | What it assumes / misses |
 |---|---|---|
-| Rule/capability defenses | CaMeL, FIDES, Progent | Mostly single-agent; no learned detection; **no recovery** |
-| Text filters | Prompt Guard-style classifiers | Miss data-only attacks |
-| Behaviour ML | TraceAegis, trajectory anomaly detectors | Detect only; no containment or recovery |
-| Multi-agent infection | Prompt Infection (LLM-to-LLM) | Shows the attack; no defense-plus-recovery evaluated |
-| Benchmarks | AgentDojo, InjecAgent | Static attacks; single agent |
+| Detect & block prompt injection | CaMeL, FIDES, Progent | Single-agent; **assumes the response is safe once it fires** |
+| Learn anomalous agent behaviour | TraceAegis, trajectory detectors | Detection only; no recovery to attack |
+| Multi-agent infection | Prompt Infection (LLM-to-LLM) | Shows spread; no defended+recovering team |
+| **Attack the defense** | Guardrail-DoS: "Double-Edged Sword" (2410.02916), "From Shield to Target" (2606.14517) | **Attack one *detector* — not the quarantine/purge/recovery pipeline, and not multi-agent** |
+| Recovery for agents | semantic rollback (2607.09748), MemAudit (2605.23723) | Recovery exists; **its abuse by an attacker is untested** |
 
-**Gap: nobody we found combines enforce → detect residual → degrade gradually → heal, or tests an attacker who abuses the healing itself.**
-
-*Be honest that this comes from a scoping search, with a full survey in month 1. Reviewers respect that.*
+**The gap:** prior "attack the defense" work jams a single guardrail. **Nobody has asked whether the automated
+*recovery* in a multi-agent team can be weaponised, nor bounded the resulting damage.** (Full survey = month 1.)
 
 ## 3. Problem Statement and Objectives
 
-**Problem:** In multi-agent LLM systems, an injection that passes the rules can spread between agents. Today's response is "block or restart everything", which destroys legitimate work and does not stop re-infection.
+**Problem.** In a defended agent team, detection triggers an automatic response. An attacker who understands the
+response can aim at *it* instead of the data:
+- **Quarantine flooding** → cheap suspicious inputs keep taking agents offline → denial of service.
+- **Taint bombing** → make malicious content touch lots of good state, so the provenance-purge destroys legitimate work.
+- **Probation re-attack** → strike again during trust restoration, forcing an endless recover-reattack cycle.
 
-**Objectives**
-1. Measure what a learned detector adds **beyond** a strong rule layer (residual attacks).
-2. Show that graduated privilege degradation keeps more work alive than binary blocking at equal security.
-3. Measure team-level spread and time-to-containment with agent-to-agent checks.
-4. Use taint (provenance) labels to heal **surgically**, and compare against a restart.
-5. Test a **healing-aware attacker** that weaponises the response mechanism.
+**Objectives (the thesis).**
+1. Define a **threat model and taxonomy** of response-path attacks on multi-agent recovery.
+2. **Measure the damage**: availability loss, Recovery Collateral Damage (RCD), re-infection.
+3. Build a **response that resists abuse** — containment budgets — and prove a **bound** on availability loss.
+4. Show it **generalises** across recovery strategies, models and a public benchmark.
 
 ## 4. Data Analysis
 
-- **Dataset: 50,340 labelled agent actions** (training split) from simulated team episodes: benign plus 5 attacker types. Labels come from simulator ground truth, which the defense never sees.
-- **Strict splits:** train seeds 0-39 → detector; validation seeds 100-139 → risk weights and thresholds; test seeds 2000-2059 → reported once.
-- **Class balance:** training traces are about 45% malicious (attack episodes are attack-heavy by design), but in real deployments attacks are rare. So we report **recall at a fixed 1% false-positive rate, precision and FPR, not accuracy**.
-- **Rules alone flag only ~39% of malicious T1 actions and 0% of T3-T5** (`results/detection.csv`), so most of the attack surface sits outside the rules. This is the "residual" space the ML targets.
-- **Figure:** `fig7_dataset.png`, showing trace volume per scenario type and the features that separate attacks from normal work.
-
-*Point out: 22 behaviour features (tool, taint, sensitivity, who requested it, request rates, recipient type, query breadth). The detector never sees content, only behaviour and provenance.*
+*(Framed around the attack experiments, not the defense.)*
+- **Experimental corpus:** 3,240 pre-registered attack/defense episodes + ~50k labelled agent actions, across 5 attacker types, strict train/val/test splits, ground truth the defense never sees.
+- **Why the response matters at all:** rules alone catch only ~39% of the naive attack and **0%** of the stealthy ones (`detection.csv`) — so systems *must* lean on detection + automated response, which is exactly the surface we attack.
+- **New metric we introduce — Recovery Collateral Damage (RCD):** legitimate state destroyed by the response ÷ total legitimate state. This is the quantity an attacker tries to maximise.
+- Rare-event data → we report **recall at fixed FPR, RCD, availability**, not accuracy.
+- **Figure:** `fig7_dataset.png`.
 
 ## 5. Proposed Design
 
-- **Architecture slide:** use the diagram from proposal page 8 (4 agents → checkpoint [rule check → ML detector → risk controller] → allow/restrict/block → self-healing loop).
-- **Taint labels:** every item carries the set of sources it came from. Labels propagate through messages, memory and files.
-- **Rules (R1-R3):** role capabilities; untrusted data cannot trigger sensitive actions; sensitive data cannot leave to unknown recipients.
-- **ML:** Isolation Forest (unsupervised) + gradient-boosted classifier, fused with rule and taint signals by a **learned** logistic risk model: R = σ(wᵀs + b).
-- **4 privilege states** with hysteresis: NORMAL → GUARDED → RESTRICTED → ISOLATED.
-- **Healing:** trace the flagged action's untrusted roots → infection set = everything carrying that label → purge only that set across all agents → quarantine the source → probation.
+- **Threat model slide (lead here):** attacker controls external content (web pages, docs), can retry, and **knows the defense's response policy** — but cannot touch code, logs or checkpoints. Goal = availability loss / collateral damage, not (only) data theft.
+- **The three attack primitives** (diagram): flooding → quarantine; taint-bomb → purge; re-attack → probation.
+- **The testbed (ContainMAS), shown as instrument:** 4 agents → checkpoint (taint → rules → risk → privilege states) → **response controller (quarantine / purge / probation)**. Circle the response controller: *"this box is what we attack."*
+- **The defense contribution — containment budgets:** every untrusted source gets a budget of disruption; once spent, further alarms escalate to *cheap* responses (block the source at the input, keep agents online) instead of repeatedly taking agents offline. This is what bounds availability loss.
 
 ## 6. Formulation of Hypothesis
 
-**Pre-registered on 2026-10-08, before any experiment, with a public deviation log** (`HYPOTHESES.md`).
+**Pre-registered in `HYPOTHESES.md` before experiments, with a deviation log.** *(Attack hypotheses lead; testbed-validation ones are support.)*
 
-| ID | Hypothesis | Falsified if |
+| ID | Hypothesis | Status |
 |---|---|---|
-| H1 | ML lowers attack success on rule-compliant attacks | not significant, or utility drops > 5 pp |
-| H2 | Graduated degradation keeps more work than binary blocking at equal ASR | task success not higher, or ASR differs > 5 pp |
-| H3 | Agent-to-agent checks lower spread and containment time | spread not lower |
-| H4 | Taint-guided healing beats restart on fidelity at similar re-infection | fidelity not higher, or re-infection > +10 pp |
-| H5 | Healing-aware attacker lowers availability; probation bounds the damage | availability falls below 50% of benign, or probation gives no ASR gain |
+| **A1** | **A healing-aware attacker measurably lowers availability by triggering the response** | **SHOWN — availability 0.88 → 0.44 (halved)** |
+| **A2** | Probation creates a re-attack window: shorter probation ⇒ more re-infection | **SHOWN — re-infection 5% → 55% as probation shrinks** |
+| A3 | Taint-bombing inflates RCD (purge destroys good work) | to run (next) |
+| **D1 (H6)** | **Containment budgets hold availability ≥ 70% of benign under flooding, with attack success up ≤ 5 pp** | to pre-register & run |
+| — | *Support: the testbed is a strong, representative defense* (rules+ML cut ASR 74%→3%; taint-heal beats restart) | SHOWN |
 
-**Statistics:** paired design (every setup sees identical scenarios); McNemar / Wilcoxon; Holm correction; 95% bootstrap CIs.
+*Key point: A1/A2 mean the attack is already real on a strong defense. The thesis is A3 + the bound (D1).*
 
 ## 7. Implementation
 
-- **Python package `containmas`** (~900 lines): provenance DAG, rule layer, ML layer, checkpoint, healing, simulator. One command reproduces every number.
-- **9 setups** (A no defense → G full ContainMAS, plus restart / no-probation / binary-blocking baselines).
-- **5 attacker types:** T1 naive, T2 data-only, T3 rule-aware, T4 detector-aware, T5 healing-aware.
-- **Scale:** 3,240 paired test episodes plus a 720-episode probation sweep.
-- **Two-mode methodology:** scripted mode (now) isolates mechanisms from LLM randomness. LLM mode (next) wraps real agents on AgentDojo with a local model via Ollama.
-- **Live demo:** `python demo.py` and `python demo.py --attacker T5`.
+- **Testbed** (`containmas/`, ~865 lines): taint DAG, rules, ML detector, 4 privilege states, self-healing. 3,240 pre-registered episodes.
+- **Live attack demo** (`live/` + `app.py`): 4 **real LLM agents** (Groq `gpt-oss-20b`), **fully sandboxed** (local fake web/DB, email to a file — nothing leaves the machine), all routed through the checkpoint. **Streamlit dashboard** animates the attack and the response live.
+- **Attacks built:** quarantine flooding (decoys), probation re-attack. **Defense built:** containment budgets (toggle).
+- **Live demo (~90s, or replay):** `--defense off` → real agents exfiltrate **40-80 records**; `--defense on` → **0**, blocked + healed. Then flip to the attack on the healing itself.
 
 ## 8. Results and Analysis
 
-**Slide A: headline (`fig1_security_utility.png`)**
-- No defense: **74%** of attacks succeed. Rules alone: **45%**. Full ContainMAS: **3%**, at the same benign task success as rules alone (0.88).
-- Binary blocking is just as secure but **halves useful work (0.48)**.
+**Slide A — the attack is real (headline).** `fig5_probation_tradeoff.png`
+- **A healing-aware attacker halves availability (0.88 → 0.44) by weaponising the response** — no data theft needed.
+- **The trade-off is structural:** longer probation cuts re-infection (55% → 5%) but cuts availability (0.80 → 0.35). *No fixed response policy wins — which is why an adaptive, budgeted response is needed.*
 
-**Slide B: H1-H4 supported (`fig3_detection.png`, `fig4_healing.png`, `fig6_containment.png`)**
-- H1: on rule-compliant attacks, ASR **0.95 → 0.06** with no utility loss.
-- H2: graduated vs binary: task success **0.59 vs 0.37** at matched ASR (Δ = 1 pp).
-- H3: message checks cut spread **0.53 → 0.31** and median containment time **22 → 5 ticks**.
-- H4: taint healing fidelity **0.71 vs 0.43** for restart; re-infection **4% vs 31%**.
+**Slide B — it's an attack on a *strong* defense (so it counts).** `fig1`, `fig4`
+- The testbed is not a strawman: rules+ML cut attack success **74% → 3%**; taint-healing beats restart (fidelity 0.71 vs 0.43; re-infection 4% vs 31%; ~18 vs ~29 good items lost per heal → **RCD is real**).
+- *Even this strong defense is turned against itself — that's the point.*
 
-**Slide C: the honest part (`fig5_probation_tradeoff.png`)**
-- **H5 NOT supported.** The healing-aware attacker halves availability (0.88 → 0.44, ratio 0.49, just under our pre-set 0.50 bound). Probation lowers ASR 0.17 → 0.07, but that is not significant after Holm (p = 0.07).
-- **Finding: probation is a lever the attacker can pull.** Longer probation means less re-infection (55% → 5%) but also less availability (0.80 → 0.35). That is a real trade-off, and it sets the next research step: adaptive probation and quarantine budgets.
-- Also against us: restart keeps **higher availability under attack (0.81 vs 0.66)**, because it has no probation period. Taint healing wins on fidelity and re-infection, not on uptime.
-- Detector generalisation: on unseen attack types recall drops (T4 0.62 → 0.55, T5 0.92 → 0.50), and the data-only attack T2 is **invisible to ML (recall 0)** but caught 100% by rules. **Rules and ML are complementary**, which is the core design argument.
+**Slide C — live proof with real LLMs.** `results/live_off.json`, `live_on.json`
+- Off: real agents leak 40-80 customer records from one poisoned page. On: 0, contained and healed. *The cure works — which is exactly why attacking it matters.*
 
-**Limitations (say it before they ask):** pilot numbers come from our own simulator, so they validate the mechanisms, not real-LLM behaviour. Mitigations: leave-one-attacker-out testing, a moved test split (deviation log), and the next phase on AgentDojo with real models.
+**Limitations (say first):** results are on our own testbed and one model; A3 and the bound are the thesis, not done. Mitigations: pre-registration, leave-one-attacker-out, and AgentDojo + a second model next.
 
-**Next steps (timeline):** month 1-2: AgentDojo multi-agent wrapper + local LLM; month 3: re-pre-register and run LLM mode; month 4: adaptive T4/T5 against deployed thresholds; month 5+: adaptive probation (fix for the H5 finding).
+**Next steps → the thesis:** M1-2 taxonomy + AgentDojo testbed; M3 taint-bombing + RCD at scale (A3); M4 containment budgets + **formal availability bound** (D1); M5+ cross-model/benchmark; paper target: a security workshop (AISec/SaTML) then a venue like DSN/ESORICS.
 
 ## 9. References (verify each before the final thesis)
 
-1. Debenedetti et al. *AgentDojo: A Dynamic Environment to Evaluate Prompt Injection Attacks and Defenses for LLM Agents.* NeurIPS Datasets & Benchmarks, 2024.
-2. Debenedetti et al. *Defeating Prompt Injections by Design* (CaMeL). arXiv, 2025.
-3. Costa et al. *Securing AI Agents with Information-Flow Control* (FIDES). arXiv, 2025.
-4. Shi et al. *Progent: Programmable Privilege Control for LLM Agents.* arXiv, 2025.
-5. Greshake et al. *Not What You've Signed Up For: Compromising Real-World LLM-Integrated Applications with Indirect Prompt Injection.* AISec, 2023.
-6. Lee & Tiwari. *Prompt Infection: LLM-to-LLM Prompt Injection within Multi-Agent Systems.* arXiv, 2024.
-7. Zhan et al. *InjecAgent: Benchmarking Indirect Prompt Injections in Tool-Integrated LLM Agents.* Findings of ACL, 2024.
-8. Liu, Ting & Zhou. *Isolation Forest.* ICDM, 2008.
-9. Chen & Guestrin. *XGBoost: A Scalable Tree Boosting System.* KDD, 2016.
+1. Zhang, Xiong & Mao. *LLM Safeguard is a Double-Edged Sword: Exploiting False Positives for DoS.* ACM CCS, 2025.
+2. *From Shield to Target: Denial-of-Service Attacks on LLM-Based Agent Guardrails.* arXiv 2606.14517, 2026.
+3. *Replicating Belief, Not Bits: Epistemic State Replication (semantic rollback).* arXiv 2607.09748, 2026.
+4. *From Agent Traces to Trust: survey of execution provenance in LLM agents.* arXiv 2606.04990, 2026.
+5. Debenedetti et al. *AgentDojo.* NeurIPS D&B, 2024.
+6. Debenedetti et al. *Defeating Prompt Injections by Design (CaMeL).* arXiv, 2025.
+7. Costa et al. *Securing AI Agents with Information-Flow Control (FIDES).* arXiv, 2025.
+8. Lee & Tiwari. *Prompt Infection: LLM-to-LLM Prompt Injection in Multi-Agent Systems.* arXiv, 2024.
+9. Greshake et al. *Not What You've Signed Up For (Indirect Prompt Injection).* AISec, 2023.
+10. *MemAudit: Post-hoc Auditing of Poisoned Agent Memory.* arXiv 2605.23723, 2026.
 
 ---
 
-### Likely reviewer questions: one-line answers
+### Likely panel questions — one-line answers
 
-- **"Your detector is near-perfect because you wrote the attacks."** Yes, which is why we held out each attacker type: recall drops to 0.50-0.55 on unseen T4/T5, and we report that. AgentDojo is the external check.
-- **"Why not just add a rule for the T3 pattern?"** You can, after the fact. That is our Learn step (human-approved rules). ML catches it *before* someone writes the rule, and LOAO measures how well.
-- **"Is self-healing just restarting?"** No. Restart loses 29 good items per heal; we lose 18 and re-infection drops from 31% to 4%. But restart wins on uptime, and we say so.
-- **"What's novel?"** Taint-guided surgical recovery across agents, and the healing-aware attacker, which found a real trade-off (H5) that a block-only evaluation would never reveal.
+- **"So did you build a defense or an attack?"** The project is the attack. We built a representative defense only so there's something real to attack and measure.
+- **"What's actually done vs. proposed?"** Done: the testbed, a 3,240-episode study, a live LLM demo, and two working response-path attacks (A1 availability halved, A2 re-attack window). Proposed: taint-bombing (A3) and the bounded-budget defense (D1).
+- **"Why is this a research project, not engineering?"** A defense answers one question; this opens a family — a taxonomy, a new metric (RCD), a provable bound, and a new defense class. That's the mobility.
+- **"Isn't attacking guardrails already done?"** For a single detector, yes. The multi-agent *recovery* pipeline — quarantine, purge, probation — is unstudied, and that's our surface.
+- **"Is the live demo safe?"** Fully sandboxed; nothing leaves the laptop.

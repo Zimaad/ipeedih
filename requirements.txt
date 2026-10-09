@@ -3,3 +3,6 @@ scipy
 pandas
 scikit-learn
 matplotlib
+httpx
+python-dotenv
+streamlit

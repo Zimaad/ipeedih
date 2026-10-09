@@ -1,0 +1,23 @@
+{
+  "signals": [
+    "rule_violation",
+    "anomaly",
+    "attack_prob",
+    "sensitivity",
+    "untrusted"
+  ],
+  "weights": [
+    0.3363,
+    1.8277,
+    8.4056,
+    0.1084,
+    2.805
+  ],
+  "bias": -7.8961,
+  "thresholds": {
+    "guard": 0.3,
+    "restrict": 0.9522,
+    "isolate": 0.9761,
+    "release": 0.24
+  }
+}
